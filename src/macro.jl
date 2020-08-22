@@ -88,11 +88,11 @@ function _tullio(exs...; mod=Main)
 
     output_array(store)
 
+    ex = action_functions(store)
+
     if opts.lowered === true
         return store
     end
-
-    ex = action_functions(store)
 
     opts.verbose == 2 && verboseprint(store)
 
@@ -325,7 +325,7 @@ rightwalk(store) = ex -> begin
 
         if isnothing(arrayonly(A))
             Anew = Symbol(string("≪", A, "≫"))
-            push!(store.outpre, :(local $Anew = $A))
+            push!(store.outpre, :( $Anew = $A))
             A = Anew
         end
 
@@ -586,7 +586,7 @@ end
 resolvestrict(i, store, done) = begin
     res = first(store.constraints[i])
     ax_i = Symbol(AXIS, i)
-    push!(store.axisdefs, :( local $ax_i = $res ))
+    push!(store.axisdefs, :(  $ax_i = $res ))
     done[i] = res
     for alt in store.constraints[i][2:end] # in which case it shouldn't be a Set
         str = "range of index $i must agree"
@@ -599,7 +599,7 @@ resolveintersect(i, store, done) = begin
         first(store.constraints[i]) : # because intersect(1:3) isa Vector, wtf?
         :( intersect($(store.constraints[i]...)) )
     ax_i = Symbol(AXIS, i)
-    push!(store.axisdefs, :( local $ax_i = $res ))
+    push!(store.axisdefs, :(  $ax_i = $res ))
     done[i] = res
 end
 
@@ -608,15 +608,15 @@ end
 function output_array(store)
     if :newarray in store.flags
 
-        push!(store.outex, :( local $RHS($(store.arrays...), $(store.rightind...)) = $(store.finaliser)($(store.right)) ))
+        push!(store.outex, :(  $RHS($(store.arrays...), $(store.rightind...)) = $(store.finaliser)($(store.right)) ))
 
         # Try inference first, usually fine, and avoids scalar evaluation on GPU
         allfirst = map(i -> :(first($(Symbol(AXIS, i)))), store.rightind)
         T0 = Symbol(TYP,0)
         warn = store.verbose>0 ? :(@warn "unable to infer eltype from RHS") : nothing
         push!(store.outex, quote
-            local $T0 = Core.Compiler.return_type($RHS, typeof(($(store.arrays...), $(allfirst...))))
-            local $TYP = if Base.isconcretetype($T0)
+             $T0 = Core.Compiler.return_type($RHS, typeof(($(store.arrays...), $(allfirst...))))
+             $TYP = if Base.isconcretetype($T0)
                 $T0
             else
                 $warn
@@ -648,10 +648,10 @@ function output_array(store)
             :( similar(parent($(store.arrays[1])), $TYP, tuple($(outaxes...),)) )
         end
         if isempty(store.leftnames)
-            push!(store.outex, :( local $(store.leftarray) = $simex ))
+            push!(store.outex, :(  $(store.leftarray) = $simex ))
         else
             nex = :(tuple($(QuoteNode.(store.leftnames)...)))
-            push!(store.outex, :( local $(store.leftarray) = NamedDims.NamedDimsArray($simex, $nex) ))
+            push!(store.outex, :(  $(store.leftarray) = NamedDims.NamedDimsArray($simex, $nex) ))
         end
 
         # Deal with scalar += now: write into array, later read it out:
@@ -712,11 +712,11 @@ function action_functions(store)
 
     if isempty(store.redind)
         make_many_actors(ACT!,
-            vcat(:($ZED::AbstractArray{$TYP}), store.arrays, store.scalars, axislist),
+            vcat(:($ZED::AbstractArray), store.arrays, store.scalars, axislist),
             nothing, store.leftind, nothing, Symbol[], ex_nored, nothing, store)
     else
         make_many_actors(ACT!,
-            vcat(:($ZED::AbstractArray{$TYP}), store.arrays, store.scalars, axislist),
+            vcat(:($ZED::AbstractArray), store.arrays, store.scalars, axislist),
             nothing, store.leftind, ex_init, store.redind, ex_iter, ex_write, store)
     end
 
@@ -745,7 +745,7 @@ function action_functions(store)
         # then slurp up outex to make a function:
         ex = quote
             let $ACT! = $ACT!
-                local @inline function $MAKE($(store.arrays...), $(store.scalars...), )
+                @inline function $MAKE($(store.arrays...), $(store.scalars...), )
                     $(store.outex...)
                 end
                 $Eval($MAKE, $∇make)($(store.arrays...), $(store.scalars...), )
@@ -806,19 +806,22 @@ function make_many_actors(act!, args, ex1, outer::Vector, ex3, inner::Vector, ex
 
     if store.fastmath && isempty(store.notfree)
         push!(store.outpre, quote
-            local @inline function $act!(::Type, $(args...), $KEEP=nothing, $FINAL=true) where {$TYP}
+            @inline function $act!(::Type, $(args...), $KEEP=nothing, $FINAL=true)
+                $TYP = eltype($ZED)
                 @inbounds @fastmath ($ex1; $ex2)
             end
         end)
     elseif isempty(store.notfree)
         push!(store.outpre, quote
-            local @inline function $act!(::Type, $(args...), $KEEP=nothing, $FINAL=true) where {$TYP}
+            @inline function $act!(::Type, $(args...), $KEEP=nothing, $FINAL=true)
+                $TYP = eltype($ZED)
                 @inbounds ($ex1; $ex2)
             end
         end)
     else
         push!(store.outpre, quote
-            local @inline function $act!(::Type, $(args...), $KEEP=nothing, $FINAL=true) where {$TYP}
+            @inline function $act!(::Type, $(args...), $KEEP=nothing, $FINAL=true)
+                $TYP = eltype($ZED)
                 ($ex1; $ex2)
             end
         end)
@@ -835,7 +838,7 @@ function make_many_actors(act!, args, ex1, outer::Vector, ex3, inner::Vector, ex
         info1 = store.verbose>0 ? :(@info "running LoopVectorization actor $($note)") : nothing
         try lex = macroexpand(store.mod, quote
 
-                local @inline function $act!(::Type{<:Array{<:Union{Base.HWReal, Bool}}}, $(args...), $KEEP=nothing, $FINAL=true) where {$TYP}
+                @inline function $act!(::Type{<:Array{<:Union{Base.HWReal, Bool}}}, $(args...), $KEEP=nothing, $FINAL=true) where {$TYP}
                     $expre
                     $info1
                     LoopVectorization.@avx unroll=$unroll $exloop
@@ -877,7 +880,7 @@ function make_many_actors(act!, args, ex1, outer::Vector, ex3, inner::Vector, ex
                 info2 = store.verbose>0 ? :(@info "running KernelAbstractions + CuArrays actor $($note)") : nothing
                 kex2 = quote
 
-                    local @inline function $act!(::Type{<:CuArray}, $(args...), $KEEP=nothing, $FINAL=true) where {$TYP}
+                    @inline function $act!(::Type{<:CuArray}, $(args...), $KEEP=nothing, $FINAL=true) where {$TYP}
                         $info2
                         cu_kern! = $kernel(CUDA(), $(store.cuda))
                         $(asserts...)
@@ -892,7 +895,7 @@ function make_many_actors(act!, args, ex1, outer::Vector, ex3, inner::Vector, ex
                 info2bis = store.verbose>0 ? :(@info "running KernelAbstractions + CUDA actor $($note)") : nothing
                 kex2bis = quote
 
-                    local @inline function $act!(::Type{<:CuArray}, $(args...), $KEEP=nothing, $FINAL=true) where {$TYP}
+                    @inline function $act!(::Type{<:CuArray}, $(args...), $KEEP=nothing, $FINAL=true) where {$TYP}
                         $info2bis
                         cu_kern! = $kernel(CUDADevice(), $(store.cuda))
                         $(asserts...)
@@ -906,7 +909,7 @@ function make_many_actors(act!, args, ex1, outer::Vector, ex3, inner::Vector, ex
             info3 = store.verbose>0 ? :(@info "running KernelAbstractions CPU actor $($note)") : nothing
             kex3 = quote
 
-                local @inline function $act!(::Type{<:Array}, $(args...), $KEEP=nothing, $FINAL=true) where {$TYP}
+                @inline function $act!(::Type{<:Array}, $(args...), $KEEP=nothing, $FINAL=true) where {$TYP}
                     $info3
                     cpu_kern! = $kernel(CPU(), 4)
                     $(asserts...)
@@ -982,9 +985,9 @@ function backward_definitions(store)
     # gradscalars = map(A -> Symbol(DEL, A), store.scalars)
     defineempties = map(store.arrays, gradarrays) do A, dA
         if A in store.nograd
-            :(local $dA = nothing)
+            :($dA = nothing)
         else
-            :( local $dA = fill!(similar($A, Base.promote_type(eltype($A), $TYP)), 0) )
+            :( $dA = fill!(similar($A, Base.promote_type(eltype($A), $TYP)), 0) )
         end
     end
     # append!(defineempties, map((x,dx) -> :($dx = zero(Base.promote_type(typeof($x), $TYP))), store.scalars, gradscalars))
@@ -997,8 +1000,8 @@ function backward_definitions(store)
         store.threads
     push!(store.outpre, quote
 
-        local $∇make = let $∇act! = $∇act!
-            local function $∇make($dZ::AbstractArray{$TYP}, $ZED, $(store.arrays...), $(store.scalars...), ) where {$TYP}
+         $∇make = let $∇act! = $∇act!
+             function $∇make($dZ::AbstractArray{$TYP}, $ZED, $(store.arrays...), $(store.scalars...), ) where {$TYP}
                 $(defineempties...)
                 $(store.axisdefs...)
                 $∇threader($∇act!, $ST,

@@ -37,7 +37,7 @@ Then it divides up the other axes, each accumulating in its own copy of `Z`.
 
 `keep=nothing` means that it overwrites the array, anything else (`keep=true`) adds on.
 """
-@inline function threader(fun!::Function, T::Type, Z::AbstractArray, As::Tuple, I0s::Tuple, J0s::Tuple, redfun, block, keep=nothing)
+@inline function threader(fun!, T::Type, Z::AbstractArray, As::Tuple, I0s::Tuple, J0s::Tuple, redfun, block, keep=nothing)
     if !all(r -> r isa AbstractUnitRange, I0s) || !all(r -> r isa AbstractUnitRange, J0s)
         fun!(T, Z, As..., I0s..., J0s..., keep) # don't thread ranges like 10:-1:1
         return nothing
@@ -66,7 +66,7 @@ to all output arrays. If there are none, then it takes a second strategy
 of dividing up the other ranges into blocks disjoint in every index,
 and giving those to different threads.
 """
-function ∇threader(fun!::Function, T::Type, As::Tuple, I0s::Tuple, J0s::Tuple, block)
+function ∇threader(fun!, T::Type, As::Tuple, I0s::Tuple, J0s::Tuple, block)
     Is = map(UnitRange, I0s)
     Js = map(UnitRange, J0s)
     if isnothing(block)
@@ -80,7 +80,7 @@ function ∇threader(fun!::Function, T::Type, As::Tuple, I0s::Tuple, J0s::Tuple,
 end
 
 
-function thread_halves(fun!::Function, T::Type, As::Tuple, Is::Tuple, Js::Tuple, block::Int, spawns::Int, keep=nothing)
+function thread_halves(fun!, T::Type, As::Tuple, Is::Tuple, Js::Tuple, block::Int, spawns::Int, keep=nothing)
     if spawns >= 2 && productlength(Is,Js) > block && productlength(Is) > 2
         I1s, I2s = cleave(Is, maybe32divsize(T))
         Base.@sync begin
@@ -97,7 +97,7 @@ end
 
 const MINIBLOCK = Ref(64^3) # 2x quicker matmul at size 1000
 
-function block_halves(fun!::Function, T::Type, As::Tuple, Is::Tuple, Js::Tuple, keep=nothing, final=true)
+function block_halves(fun!, T::Type, As::Tuple, Is::Tuple, Js::Tuple, keep=nothing, final=true)
     keep == nothing || keep == true || error("illegal value for keep")
     final == nothing || final == true || error("illegal value for final")
     if productlength(Is,Js) <= MINIBLOCK[]
@@ -163,7 +163,7 @@ colour!(zeros(Int, 11,9), 2)
 
 =#
 
-function thread_scalar(fun!::Function, T::Type, Z::AbstractArray, As::Tuple, Js::Tuple, redfun, block::Int, spawns::Int, keep=nothing)
+function thread_scalar(fun!, T::Type, Z::AbstractArray, As::Tuple, Js::Tuple, redfun, block::Int, spawns::Int, keep=nothing)
     if productlength(Js) <= block || spawns < 2
         # @info "thread_scalar on $(Threads.threadid())" Js
         return fun!(T, Z, As..., Js..., keep)
@@ -183,7 +183,7 @@ function thread_scalar(fun!::Function, T::Type, Z::AbstractArray, As::Tuple, Js:
     nothing
 end
 
-function thread_quarters(fun!::Function, T::Type, As::Tuple, Js::Tuple, block::Int, spawns::Int)
+function thread_quarters(fun!, T::Type, As::Tuple, Js::Tuple, block::Int, spawns::Int)
     if productlength(Js) <= block || count(r -> length(r)>=2, Js) < 2 || spawns < 4
         return fun!(T, As..., Js...)
     else
